@@ -1,0 +1,1017 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: https://cesium.com; script-src-elem 'self' 'unsafe-inline' blob: https://cesium.com; worker-src 'self' blob: https://cesium.com; child-src 'self' blob:; style-src 'self' 'unsafe-inline' https://cesium.com; img-src 'self' data: blob: https://cesium.com https://cyberjapandata.gsi.go.jp https://tile.openstreetmap.org https://*.openstreetmap.org https://*.tile.openstreetmap.org; connect-src 'self' blob: https://cesium.com https://api.open-meteo.com https://cyberjapandata.gsi.go.jp https://tile.openstreetmap.org https://*.openstreetmap.org https://*.tile.openstreetmap.org ws://127.0.0.1:* ws://localhost:*; font-src 'self' data:; object-src 'none'; base-uri 'self'; upgrade-insecure-requests">
+    <title>大槌町 火災熱源マップ</title>
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.114/Build/Cesium/Cesium.js"></script>
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.114/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { width: 100%; height: 100%; overflow: hidden; font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif; background: #090b0f; color: #fff; }
+        #cesiumContainer { width: 100%; height: 100%; }
+        .loading { position: fixed; inset: 0; z-index: 300; display: grid; place-items: center; gap: 12px; align-content: center; background: #090b0f; color: rgba(255,255,255,.82); transition: opacity .25s ease; }
+        .loading.hidden { opacity: 0; pointer-events: none; }
+        .loading-spinner { width: 42px; height: 42px; border: 3px solid rgba(255,255,255,.18); border-top-color: #ffb15d; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .title-overlay { position: absolute; top: 18px; left: 20px; z-index: 100; max-width: min(540px, calc(100vw - 40px)); pointer-events: none; text-shadow: 0 2px 18px rgba(0,0,0,.78); }
+        .title-overlay h1 { font-size: clamp(20px, 3vw, 30px); line-height: 1.2; letter-spacing: 0; }
+        .title-overlay p { margin-top: 8px; font-size: 13px; line-height: 1.55; color: rgba(255,255,255,.78); }
+        .control-panel { position: absolute; top: 14px; right: 14px; z-index: 110; width: min(350px, calc(100vw - 28px)); max-height: calc(100vh - 28px); overflow: auto; padding: 12px; border: 1px solid rgba(255,255,255,.14); border-radius: 8px; background: rgba(13,16,22,.9); box-shadow: 0 18px 45px rgba(0,0,0,.38); backdrop-filter: blur(14px); }
+        .panel-heading { display: flex; align-items: start; justify-content: space-between; gap: 10px; margin-bottom: 9px; }
+        .panel-heading h2 { font-size: 15px; line-height: 1.25; color: #ffb15d; letter-spacing: 0; }
+        .phase-badge { flex: 0 0 auto; min-width: 76px; border: 1px solid rgba(255,177,93,.45); border-radius: 999px; background: rgba(255,177,93,.15); color: #ffd7aa; padding: 5px 8px; font-size: 11px; text-align: center; white-space: nowrap; }
+        .time-card, .notice { border: 1px solid rgba(255,255,255,.1); border-radius: 8px; background: rgba(255,255,255,.07); padding: 9px; margin-bottom: 10px; }
+        .big-time { display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; }
+        .big-time strong { font-size: 24px; line-height: 1.05; letter-spacing: 0; }
+        .big-time span { font-size: 11px; color: rgba(255,255,255,.68); text-align: left; }
+        input[type="range"] { width: 100%; height: 8px; appearance: none; border-radius: 999px; background: linear-gradient(90deg, #f7d55f 0%, #f47b36 45%, #e7352f 78%, #8d1119 100%); outline: none; }
+        input[type="range"]::-webkit-slider-thumb { appearance: none; width: 22px; height: 22px; border: 3px solid #fff; border-radius: 50%; background: #e7352f; box-shadow: 0 3px 12px rgba(0,0,0,.45); cursor: pointer; }
+        .timeline-labels { display: flex; justify-content: space-between; margin-top: 6px; font-size: 10px; color: rgba(255,255,255,.62); }
+        .date-line { margin-top: 0; font-size: 12px; color: #ffd7aa; }
+        .source-note, .notice { color: rgba(255,255,255,.78); font-size: 11px; line-height: 1.5; }
+        .notice a { color: #ffd7aa; }
+        .source-note { margin-top: 8px; padding: 7px 8px; border: 1px solid rgba(255,177,93,.25); border-radius: 7px; background: rgba(255,177,93,.12); }
+        .play-row, .layer-grid, .map-style-grid, .time-window-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
+        .layer-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 6px; }
+        .map-style-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 6px; }
+        .time-window-grid { grid-template-columns: 1.2fr 1fr 1fr; margin-top: 6px; }
+        button { min-height: 32px; border: 1px solid rgba(255,255,255,.13); border-radius: 7px; background: rgba(255,255,255,.08); color: #fff; font: inherit; font-size: 12px; cursor: pointer; transition: background .2s ease, border-color .2s ease, transform .2s ease; }
+        button:hover { background: rgba(255,255,255,.14); }
+        button:active { transform: translateY(1px); }
+        button.active { background: rgba(244,123,54,.2); border-color: rgba(255,177,93,.75); color: #ffd7aa; }
+        .primary-btn { grid-column: span 2; background: #e34d32; border-color: #ff8b5a; font-weight: 700; }
+        .section-label { display: block; margin: 9px 0 5px; font-size: 11px; color: rgba(255,255,255,.62); }
+        .stats-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
+        .stat { min-height: 50px; padding: 7px; border: 1px solid rgba(255,255,255,.1); border-radius: 7px; background: rgba(255,255,255,.06); }
+        .stat span { display: block; font-size: 10px; color: rgba(255,255,255,.62); }
+        .stat strong { display: block; margin-top: 5px; font-size: 13px; color: #fff; }
+        .event-list { display: grid; gap: 6px; max-height: 150px; overflow: auto; padding-right: 2px; }
+        .event-item { position: relative; display: grid; grid-template-columns: 76px 1fr 12px; align-items: center; gap: 8px; width: 100%; min-height: 48px; padding: 8px; text-align: left; }
+        .event-item strong { font-size: 12px; color: #ffd7aa; }
+        .event-item span { font-size: 11px; line-height: 1.35; color: rgba(255,255,255,.74); }
+        .event-dot { width: 10px; height: 10px; border-radius: 50%; box-shadow: 0 0 14px currentColor; }
+        .legend { position: absolute; left: 20px; bottom: 18px; z-index: 100; width: min(360px, calc(100vw - 40px)); padding: 12px; border: 1px solid rgba(255,255,255,.13); border-radius: 8px; background: rgba(13,16,22,.82); backdrop-filter: blur(12px); }
+        .legend h3 { font-size: 13px; margin-bottom: 8px; color: #ffd7aa; }
+        .legend-scale { height: 8px; border-radius: 999px; background: linear-gradient(90deg, #6f6f6f, #f7d55f, #f47b36, #e7352f); }
+        .legend-row { display: flex; justify-content: space-between; gap: 10px; margin-top: 7px; font-size: 11px; color: rgba(255,255,255,.68); }
+        .hover-tooltip { position: absolute; z-index: 220; display: none; transform: translate(14px, 14px); max-width: 280px; padding: 10px 11px; border: 1px solid rgba(255,255,255,.18); border-radius: 8px; background: rgba(8,10,14,.92); color: rgba(255,255,255,.82); font-size: 12px; line-height: 1.45; pointer-events: none; box-shadow: 0 14px 34px rgba(0,0,0,.42); }
+        .hover-tooltip strong { display: block; color: #ffd7aa; margin-bottom: 4px; }
+        .empty-state { display: none; position: absolute; inset: auto 18px 18px auto; z-index: 115; width: min(380px, calc(100vw - 36px)); padding: 14px; border: 1px solid rgba(255,255,255,.16); border-radius: 8px; background: rgba(13,16,22,.92); font-size: 13px; line-height: 1.55; }
+        .empty-state.visible { display: block; }
+        @media (max-width: 760px) {
+            .title-overlay { top: 12px; left: 14px; right: 14px; }
+            .title-overlay p { display: none; }
+            .control-panel { top: auto; right: 10px; left: 10px; bottom: 10px; width: auto; max-height: 38vh; padding: 10px; }
+            .panel-heading { margin-bottom: 8px; }
+            .panel-heading h2 { font-size: 14px; }
+            .time-card { padding: 9px; margin-bottom: 8px; }
+            .big-time { margin-bottom: 6px; }
+            .big-time strong { font-size: 18px; }
+            .source-note, .notice, .event-list { display: none; }
+            .play-row, .layer-grid, .map-style-grid, .time-window-grid { gap: 6px; margin-top: 8px; }
+            button { min-height: 32px; font-size: 12px; }
+            .stats-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
+            .stat { min-height: 46px; padding: 7px; }
+            .stat span { font-size: 10px; }
+            .stat strong { margin-top: 4px; font-size: 13px; }
+            .section-label { margin: 8px 0 5px; font-size: 11px; }
+            .legend { display: none; }
+            .empty-state { left: 12px; right: 12px; bottom: 12px; width: auto; }
+        }
+    </style>
+</head>
+<body>
+    <div class="loading" id="loading">
+        <div class="loading-spinner"></div>
+        <p>FIRMS CSVを読み込み中...</p>
+    </div>
+
+    <div class="title-overlay">
+        <h1>大槌町 火災熱源マップ</h1>
+        <p>NASA FIRMSの熱異常検知データを時系列で表示します。表示は衛星観測にもとづく参考情報で、公式な被害範囲や延焼予測ではありません。</p>
+    </div>
+
+    <div id="cesiumContainer"></div>
+    <div class="hover-tooltip" id="hoverTooltip"></div>
+    <div class="empty-state" id="emptyState">表示できる熱源データがありません。日次更新スクリプトの実行結果とCSVの配置を確認してください。</div>
+
+    <section class="control-panel" aria-label="熱源マップ操作">
+        <div class="panel-heading">
+            <h2>時系列で見る熱源</h2>
+            <div class="phase-badge" id="phaseBadge">読み込み中</div>
+        </div>
+
+        <div class="time-card">
+            <div class="big-time">
+                <strong id="currentTime">0時間00分</strong>
+                <span id="currentCaption">熱源を読み込み中</span>
+            </div>
+            <div class="date-line" id="currentDate">-</div>
+            <div class="source-note" id="sourceNote">NASA FIRMS CSVを読み込み中...</div>
+            <input type="range" id="timeRange" min="0" max="0" value="0" step="180" aria-label="観測開始からの経過時間">
+            <div class="timeline-labels">
+                <span>開始</span>
+                <span id="endTimeLabel">0時間00分</span>
+            </div>
+            <div class="play-row">
+                <button class="primary-btn" id="playButton">再生</button>
+                <button id="resetButton">最初へ</button>
+                <button id="latestButton">最新へ</button>
+            </div>
+        </div>
+
+        <span class="section-label">レイヤー</span>
+        <div class="layer-grid">
+            <button class="active" id="toggleHeat">熱源</button>
+            <button class="active" id="toggleWind">風向</button>
+            <button class="active" id="toggleOSM">写真・地図</button>
+            <button class="active" id="toggleLabels">詳細</button>
+        </div>
+
+        <span class="section-label">背景</span>
+        <div class="map-style-grid" aria-label="背景地図の切り替え">
+            <button class="active" data-map-style="photo">写真</button>
+            <button data-map-style="standard">地図</button>
+            <button data-map-style="pale">淡色</button>
+        </div>
+
+        <span class="section-label">表示期間</span>
+        <div class="time-window-grid" aria-label="熱源の表示期間">
+            <button class="active" data-time-window="all">全期間累積</button>
+            <button data-time-window="360">直近6時間</button>
+            <button data-time-window="1440">直近24時間</button>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat"><span>表示熱源</span><strong id="visibleCount">0</strong></div>
+            <div class="stat"><span>最大スコア</span><strong id="maxIntensity">0.00</strong></div>
+            <div class="stat"><span>風向・風速</span><strong id="windStatus">北東 4.0m/s</strong></div>
+        </div>
+
+        <div class="notice">既定は全期間累積です。消えた点や暗い点が収束・鎮火を示すものではありません。直近表示は分析用の補助モードです。<a href="docs/fire-map-explanation.md" target="_blank" rel="noopener">説明文書</a></div>
+
+        <span class="section-label">観測イベント</span>
+        <div class="event-list" id="eventList"></div>
+    </section>
+
+    <aside class="legend">
+        <h3>見方</h3>
+        <div class="legend-scale"></div>
+        <div class="legend-row"><span>古い・弱い</span><span>新しい・強い</span></div>
+        <div class="legend-row"><span>点の大きさ: FRPと輝度温度</span><span>楕円の予想範囲は非表示</span></div>
+    </aside>
+
+    <script>
+        if (!window.Cesium) {
+            document.getElementById("loading").classList.add("hidden");
+            const emptyStateElement = document.getElementById("emptyState");
+            emptyStateElement.textContent = "CesiumJSを読み込めませんでした。会社ネットワークやVSCodeプレビューが https://cesium.com へのアクセスをブロックしていないか確認してください。";
+            emptyStateElement.classList.add("visible");
+            throw new Error("CesiumJS was not loaded.");
+        }
+
+        const viewer = new Cesium.Viewer("cesiumContainer", {
+            terrainProvider: undefined,
+            baseLayer: false,
+            baseLayerPicker: false,
+            geocoder: false,
+            homeButton: false,
+            sceneModePicker: false,
+            navigationHelpButton: false,
+            animation: false,
+            timeline: false,
+            fullscreenButton: false,
+            vrButton: false,
+            infoBox: false,
+            selectionIndicator: false
+        });
+
+        viewer.scene.globe.enableLighting = true;
+        viewer.scene.fog.enabled = true;
+        viewer.scene.fog.density = 0.00045;
+
+        const FIRMS_CONFIG = {
+            localCsvUrl: "data/firms-otsuchi-latest.csv",
+            timelineStart: "2026-04-22T14:00:00+09:00",
+            area: { west: 141.78, south: 39.30, east: 141.97, north: 39.44 },
+            initialCenter: { lon: 142.0190397, lat: 39.3141409, height: 12636, heading: 310.13, pitch: -54.57 }
+        };
+
+        let incidentStart = null;
+        let heatData = [];
+        let windData = createWindTimeline();
+        let windDataLabel = "固定参考値";
+        let maxMinutes = 0;
+        let origin = FIRMS_CONFIG.initialCenter;
+        const heatEntities = [];
+        const windArrows = [];
+        let baseGridLayer = null;
+        let photoLayer = null;
+        let standardLayer = null;
+        let paleLayer = null;
+        let mapOverlayLayer = null;
+        let osmLayer = null;
+        let mapTileErrorShown = false;
+        let playTimer = null;
+        let playLastFrameTime = null;
+        let selectedMinute = 0;
+
+        const state = { heat: true, wind: true, osm: true, labels: true, mapStyle: "photo", timeWindow: "all" };
+
+        const timeRange = document.getElementById("timeRange");
+        const currentTime = document.getElementById("currentTime");
+        const currentDate = document.getElementById("currentDate");
+        const currentCaption = document.getElementById("currentCaption");
+        const phaseBadge = document.getElementById("phaseBadge");
+        const visibleCount = document.getElementById("visibleCount");
+        const maxIntensity = document.getElementById("maxIntensity");
+        const windStatus = document.getElementById("windStatus");
+        const eventList = document.getElementById("eventList");
+        const playButton = document.getElementById("playButton");
+        const hoverTooltip = document.getElementById("hoverTooltip");
+        const sourceNote = document.getElementById("sourceNote");
+        const emptyState = document.getElementById("emptyState");
+
+        viewer.camera.setView({
+            destination: Cesium.Cartesian3.fromDegrees(FIRMS_CONFIG.initialCenter.lon, FIRMS_CONFIG.initialCenter.lat, FIRMS_CONFIG.initialCenter.height),
+            orientation: {
+                heading: Cesium.Math.toRadians(FIRMS_CONFIG.initialCenter.heading),
+                pitch: Cesium.Math.toRadians(FIRMS_CONFIG.initialCenter.pitch),
+                roll: 0
+            }
+        });
+
+        async function loadFirmsHeatData() {
+            const response = await fetch(FIRMS_CONFIG.localCsvUrl, { cache: "no-store" });
+            if (!response.ok) {
+                throw new Error(`CSVを取得できませんでした: ${response.status}`);
+            }
+            return normalizeFirmsRows(parseCsv(await response.text()));
+        }
+
+        function parseCsv(csv) {
+            const lines = csv.trim().split(/\r?\n/).filter(Boolean);
+            if (lines.length < 2) return [];
+            const headers = splitCsvLine(lines[0]).map((header) => header.trim());
+            return lines.slice(1).map((line) => {
+                const values = splitCsvLine(line);
+                return headers.reduce((row, header, index) => {
+                    row[header] = values[index] || "";
+                    return row;
+                }, {});
+            });
+        }
+
+        function splitCsvLine(line) {
+            const result = [];
+            let current = "";
+            let inQuote = false;
+            for (let i = 0; i < line.length; i++) {
+                const char = line[i];
+                const next = line[i + 1];
+                if (char === '"' && next === '"') {
+                    current += '"';
+                    i++;
+                } else if (char === '"') {
+                    inQuote = !inQuote;
+                } else if (char === "," && !inQuote) {
+                    result.push(current);
+                    current = "";
+                } else {
+                    current += char;
+                }
+            }
+            result.push(current);
+            return result;
+        }
+
+        function normalizeFirmsRows(rows) {
+            const points = rows.map(rowToHeatPoint).filter(Boolean).filter(isLikelyLandDetection).sort((a, b) => a.observedAt - b.observedAt);
+            const uniquePoints = [];
+            const seen = new Set();
+            points.forEach((point) => {
+                const key = [point.source, point.observedAt.toISOString(), point.lat.toFixed(4), point.lon.toFixed(4)].join("|");
+                if (!seen.has(key)) {
+                    seen.add(key);
+                    uniquePoints.push(point);
+                }
+            });
+            if (!uniquePoints.length) return [];
+            const firstTime = new Date(FIRMS_CONFIG.timelineStart).getTime();
+            return uniquePoints.map((point) => ({
+                ...point,
+                minute: Math.round((point.observedAt.getTime() - firstTime) / 60000),
+                district: estimateDistrict(point.lon, point.lat),
+                note: `${point.source || "FIRMS"} / FRP ${point.frp.toFixed(1)} MW / 信頼度 ${point.confidenceLabel}`
+            }));
+        }
+
+        function rowToHeatPoint(row) {
+            const lat = Number(row.latitude);
+            const lon = Number(row.longitude);
+            const dateText = row.acq_date;
+            const timeText = String(row.acq_time || "").padStart(4, "0");
+            if (!Number.isFinite(lat) || !Number.isFinite(lon) || !dateText || !timeText) return null;
+            const observedAt = new Date(Date.UTC(Number(dateText.slice(0, 4)), Number(dateText.slice(5, 7)) - 1, Number(dateText.slice(8, 10)), Number(timeText.slice(0, 2)), Number(timeText.slice(2, 4))));
+            if (Number.isNaN(observedAt.getTime())) return null;
+            const frp = Number(row.frp) || 0;
+            const brightness = Number(row.bright_ti4 || row.brightness || row.bright_t31) || 300;
+            const confidence = confidenceValue(row.confidence);
+            const intensity = Math.max(0.25, Math.min(1, frp / 45 + (brightness - 300) / 140 + confidence.value / 300));
+            return { lon, lat, frp, brightness, confidence: confidence.value, confidenceLabel: confidence.label, intensity, observedAt, source: row.source || row.instrument || "FIRMS" };
+        }
+
+        function confidenceValue(value) {
+            const numeric = Number(value);
+            if (Number.isFinite(numeric)) return { value: numeric, label: String(numeric) };
+            const text = String(value || "").toLowerCase();
+            if (text === "h") return { value: 90, label: "高" };
+            if (text === "n") return { value: 60, label: "標準" };
+            if (text === "l") return { value: 30, label: "低" };
+            return { value: 45, label: value || "不明" };
+        }
+
+        function isLikelyLandDetection(point) {
+            const insideArea = point.lon >= FIRMS_CONFIG.area.west && point.lon <= FIRMS_CONFIG.area.east && point.lat >= FIRMS_CONFIG.area.south && point.lat <= FIRMS_CONFIG.area.north;
+            const likelyBayOrOcean = point.lon > 141.93 && point.lat < 39.36;
+            return insideArea && !likelyBayOrOcean;
+        }
+
+        function estimateDistrict(lon, lat) {
+            if (lon > 141.915 && lat > 39.375) return "吉里吉里周辺";
+            if (lon > 141.905 && lat <= 39.375) return "赤浜・安渡周辺";
+            if (lon < 141.86 && lat > 39.37) return "大槌町西部山域";
+            if (lon < 141.87) return "金沢・小鎚川上流";
+            if (lat > 39.40) return "町北部山域";
+            if (lat < 39.34) return "町南部山域";
+            return "大槌町内陸側";
+        }
+
+        function createWindTimeline() {
+            return [
+                { minute: 0, direction: 35, speed: 4.0 },
+                { minute: 120, direction: 48, speed: 5.5 },
+                { minute: 260, direction: 62, speed: 7.2 },
+                { minute: 420, direction: 76, speed: 6.4 },
+                { minute: 570, direction: 92, speed: 8.1 },
+                { minute: 720, direction: 118, speed: 5.8 },
+                { minute: 900, direction: 145, speed: 4.6 }
+            ];
+        }
+
+        function openMeteoTimeToDate(timeText) {
+            return new Date(`${timeText}+09:00`);
+        }
+
+        function toWindTimeline(hourly) {
+            if (!incidentStart || !hourly || !Array.isArray(hourly.time)) return [];
+            return hourly.time.map((timeText, index) => {
+                const observedAt = openMeteoTimeToDate(timeText);
+                const speed = Number(hourly.wind_speed_10m?.[index]);
+                const direction = Number(hourly.wind_direction_10m?.[index]);
+                if (!Number.isFinite(observedAt.getTime()) || !Number.isFinite(speed) || !Number.isFinite(direction)) {
+                    return null;
+                }
+                return {
+                    minute: Math.round((observedAt.getTime() - incidentStart.getTime()) / 60000),
+                    direction,
+                    speed,
+                    observedAt
+                };
+            }).filter(Boolean).sort((a, b) => a.minute - b.minute);
+        }
+
+        async function loadOpenMeteoWindData() {
+            if (!windArrows.length || !incidentStart) return;
+
+            const latitudes = windArrows.map((arrow) => arrow.windMeta.lat.toFixed(5)).join(",");
+            const longitudes = windArrows.map((arrow) => arrow.windMeta.lon.toFixed(5)).join(",");
+            const params = new URLSearchParams({
+                latitude: latitudes,
+                longitude: longitudes,
+                hourly: "wind_speed_10m,wind_direction_10m",
+                wind_speed_unit: "ms",
+                timezone: "Asia/Tokyo",
+                models: "jma_msm",
+                past_days: "7",
+                forecast_days: "4"
+            });
+            const response = await fetch(`https://api.open-meteo.com/v1/jma?${params.toString()}`, { cache: "no-store" });
+            if (!response.ok) {
+                throw new Error(`Open-Meteo API error: ${response.status}`);
+            }
+
+            const payload = await response.json();
+            const locations = Array.isArray(payload) ? payload : [payload];
+            let centerTimeline = [];
+
+            windArrows.forEach((arrow, index) => {
+                const timeline = toWindTimeline(locations[index]?.hourly);
+                if (timeline.length) {
+                    arrow.windMeta.timeline = timeline;
+                    if (!centerTimeline.length || Math.abs(arrow.windMeta.x) + Math.abs(arrow.windMeta.y) === 0) {
+                        centerTimeline = timeline;
+                    }
+                }
+            });
+
+            if (centerTimeline.length) {
+                windData = centerTimeline;
+                windDataLabel = "Open-Meteo JMA MSM";
+            }
+        }
+
+        function colorForPoint(point, currentMinute) {
+            const age = Math.max(0, currentMinute - point.minute);
+            const ageFade = Math.min(age / 1440, 1);
+            const base = point.intensity > 0.82 ? Cesium.Color.fromCssColorString("#e7352f") : point.intensity > 0.62 ? Cesium.Color.fromCssColorString("#f47b36") : Cesium.Color.fromCssColorString("#f7d55f");
+            return Cesium.Color.lerp(base, Cesium.Color.fromCssColorString("#6f6f6f"), ageFade * 0.5, new Cesium.Color()).withAlpha(Math.max(0.22, 0.9 - ageFade * 0.62));
+        }
+
+        function heatPixelSize(point, isLatest) {
+            const thermalBoost = Math.max(0, (point.brightness || 300) - 295) / 55;
+            const base = 8 + point.intensity * 20 + thermalBoost * 8;
+            return Math.min(42, base + (isLatest ? 7 : 0));
+        }
+
+        function fireflyScale(point, isLatest) {
+            return Math.min(1.25, 0.42 + point.intensity * 0.54 + (isLatest ? 0.18 : 0));
+        }
+
+        function createFireflyImage() {
+            const canvas = document.createElement("canvas");
+            canvas.width = 96;
+            canvas.height = 96;
+            const context = canvas.getContext("2d");
+            const gradient = context.createRadialGradient(48, 48, 3, 48, 48, 46);
+            gradient.addColorStop(0, "rgba(255, 247, 177, 1)");
+            gradient.addColorStop(0.16, "rgba(255, 214, 104, 0.95)");
+            gradient.addColorStop(0.42, "rgba(255, 143, 67, 0.42)");
+            gradient.addColorStop(1, "rgba(255, 143, 67, 0)");
+            context.fillStyle = gradient;
+            context.fillRect(0, 0, 96, 96);
+            return canvas.toDataURL("image/png");
+        }
+
+        function formatElapsed(minute) {
+            const hours = Math.floor(minute / 60);
+            const mins = minute % 60;
+            return `${hours}時間${String(mins).padStart(2, "0")}分`;
+        }
+
+        function formatDateTime(minute) {
+            if (!incidentStart) return "-";
+            const date = new Date(incidentStart.getTime() + minute * 60000);
+            return new Intl.DateTimeFormat("ja-JP", { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Tokyo" }).format(date);
+        }
+
+        function formatElapsedClean(minute) {
+            const hours = Math.floor(minute / 60);
+            const mins = Math.floor(minute % 60);
+            return `${hours}時間${String(mins).padStart(2, "0")}分`;
+        }
+
+        function formatDateTimeClean(minute) {
+            if (!incidentStart) return "-";
+            const date = new Date(incidentStart.getTime() + minute * 60000);
+            const parts = new Intl.DateTimeFormat("ja-JP", {
+                month: "numeric",
+                day: "numeric",
+                weekday: "short",
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: false,
+                timeZone: "Asia/Tokyo"
+            }).formatToParts(date).reduce((values, part) => {
+                values[part.type] = part.value;
+                return values;
+            }, {});
+            return `${parts.month}/${parts.day}(${parts.weekday}) ${parts.hour}:${parts.minute}`;
+        }
+
+        formatElapsed = formatElapsedClean;
+        formatDateTime = formatDateTimeClean;
+
+        function interpolateWind(minute) {
+            return interpolateWindTimeline(windData, minute);
+        }
+
+        function interpolateWindTimeline(timeline, minute) {
+            if (!timeline?.length) return { minute, direction: 0, speed: 0 };
+            const nextIndex = timeline.findIndex((wind) => wind.minute >= minute);
+            if (nextIndex <= 0) return timeline[0];
+            if (nextIndex === -1) return timeline.at(-1);
+            const prev = timeline[nextIndex - 1];
+            const next = timeline[nextIndex];
+            const ratio = (minute - prev.minute) / (next.minute - prev.minute);
+            return { minute, direction: prev.direction + (next.direction - prev.direction) * ratio, speed: prev.speed + (next.speed - prev.speed) * ratio };
+        }
+
+        function windDirectionName(degree) {
+            const names = ["北", "北東", "東", "南東", "南", "南西", "西", "北西"];
+            const index = Math.round((((degree % 360) + 360) % 360) / 45) % 8;
+            return names[index];
+        }
+
+        function windColorForSpeed(speed) {
+            if (speed >= 10) return "#ffb15d";
+            if (speed >= 7) return "#f7d55f";
+            if (speed >= 4) return "#8ae9ff";
+            return "#55d7ff";
+        }
+
+        function windArrowLength(speed) {
+            return 0.0048 + Math.min(speed, 14) * 0.00105;
+        }
+
+        function averageWindVector(winds) {
+            if (!winds.length) return null;
+            const sum = winds.reduce((acc, wind) => {
+                const rad = Cesium.Math.toRadians(wind.direction);
+                acc.x += Math.sin(rad) * wind.speed;
+                acc.y += Math.cos(rad) * wind.speed;
+                return acc;
+            }, { x: 0, y: 0 });
+            const speed = Math.hypot(sum.x, sum.y) / winds.length;
+            const direction = (Cesium.Math.toDegrees(Math.atan2(sum.x, sum.y)) + 360) % 360;
+            return { direction, speed };
+        }
+
+        function phaseForMinute(minute) {
+            if (minute < 120) return "初期検知";
+            if (minute < 360) return "検知増加";
+            if (minute < 660) return "広域検知";
+            return "後半検知";
+        }
+
+        function visiblePoints(minute) {
+            if (state.timeWindow === "all") {
+                return heatData.filter((point) => point.minute <= minute);
+            }
+
+            const windowMinutes = Number(state.timeWindow);
+            const startMinute = Math.max(0, minute - windowMinutes);
+            return heatData.filter((point) => point.minute <= minute && point.minute >= startMinute);
+        }
+
+        function timeWindowLabel() {
+            if (state.timeWindow === "all") return "全期間累積";
+            if (state.timeWindow === "360") return "直近6時間";
+            if (state.timeWindow === "1440") return "直近24時間";
+            return "表示期間";
+        }
+
+        function addHeatSources() {
+            const fireflyImage = createFireflyImage();
+            heatData.forEach((point) => {
+                const entity = viewer.entities.add({
+                    position: Cesium.Cartesian3.fromDegrees(point.lon, point.lat, 180),
+                    billboard: {
+                        image: fireflyImage,
+                        scale: fireflyScale(point, false),
+                        color: colorForPoint(point, 0).withAlpha(0.96),
+                        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                        scaleByDistance: new Cesium.NearFarScalar(6000, 1.2, 45000, 0.55)
+                    },
+                    point: {
+                        pixelSize: Math.max(4, heatPixelSize(point, false) * 0.24),
+                        color: colorForPoint(point, 0),
+                        outlineColor: Cesium.Color.WHITE.withAlpha(0.18),
+                        outlineWidth: 0.5,
+                        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                        scaleByDistance: new Cesium.NearFarScalar(6000, 1.2, 45000, 0.55)
+                    },
+                    properties: point
+                });
+                entity.heatPoint = point;
+                heatEntities.push(entity);
+            });
+        }
+
+        function addWindLayer() {
+            const centerLon = 141.895;
+            const centerLat = 39.370;
+            const spacing = 0.024;
+            for (let x = -4; x <= 4; x++) {
+                for (let y = -3; y <= 3; y++) {
+                    const lon = centerLon + x * spacing;
+                    const lat = centerLat + y * spacing;
+                    const arrow = viewer.entities.add({
+                        position: Cesium.Cartesian3.fromDegrees(lon, lat, 850),
+                        polyline: { positions: [], width: 4, material: new Cesium.PolylineArrowMaterialProperty(Cesium.Color.fromCssColorString(windColorForSpeed(4)).withAlpha(0.95)) }
+                    });
+                    arrow.windMeta = { lon, lat, x, y };
+                    arrow.show = false;
+                    windArrows.push(arrow);
+                }
+            }
+        }
+
+        function addOSMLayer() {
+            baseGridLayer = viewer.imageryLayers.addImageryProvider(new Cesium.GridImageryProvider({
+                cells: 16,
+                color: Cesium.Color.fromCssColorString("#5f768f").withAlpha(0.34),
+                glowColor: Cesium.Color.fromCssColorString("#9fb7cf").withAlpha(0.16),
+                backgroundColor: Cesium.Color.fromCssColorString("#17202a").withAlpha(0.72)
+            }));
+            baseGridLayer.alpha = 0.55;
+
+            photoLayer = viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
+                url: "https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg",
+                minimumLevel: 2,
+                maximumLevel: 18,
+                rectangle: Cesium.Rectangle.fromDegrees(122, 20, 154, 46),
+                credit: "地理院タイル"
+            }));
+            photoLayer.imageryProvider.errorEvent.addEventListener(() => {
+                if (mapTileErrorShown) return;
+                mapTileErrorShown = true;
+                sourceNote.textContent = "写真タイルを読み込めません。会社ネットワークで cyberjapandata.gsi.go.jp がブロックされていないか確認してください。";
+            });
+            photoLayer.alpha = 0.92;
+
+            standardLayer = viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
+                url: "https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png",
+                minimumLevel: 5,
+                maximumLevel: 18,
+                rectangle: Cesium.Rectangle.fromDegrees(122, 20, 154, 46),
+                credit: "地理院タイル"
+            }));
+            standardLayer.imageryProvider.errorEvent.addEventListener(() => {
+                if (mapTileErrorShown) return;
+                mapTileErrorShown = true;
+                sourceNote.textContent = "背景地図タイルを読み込めません。会社ネットワークで cyberjapandata.gsi.go.jp がブロックされていないか確認してください。";
+            });
+            standardLayer.alpha = 0.24;
+
+            paleLayer = viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
+                url: "https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png",
+                minimumLevel: 5,
+                maximumLevel: 18,
+                rectangle: Cesium.Rectangle.fromDegrees(122, 20, 154, 46),
+                credit: "地理院タイル"
+            }));
+            paleLayer.alpha = 0;
+            mapOverlayLayer = standardLayer;
+            osmLayer = standardLayer;
+            updateMapStyle();
+        }
+
+        function appendText(parent, tagName, text, className) {
+            const element = document.createElement(tagName);
+            if (className) element.className = className;
+            element.textContent = text;
+            parent.appendChild(element);
+            return element;
+        }
+
+        function renderEventList() {
+            eventList.replaceChildren();
+            heatData.forEach((point, index) => {
+                const row = document.createElement("button");
+                row.className = "event-item";
+                row.type = "button";
+                row.dataset.minute = String(point.minute);
+                appendText(row, "strong", formatElapsed(point.minute));
+                const detail = appendText(row, "span", `${point.note}\n${formatDateTime(point.minute)}`);
+                detail.style.whiteSpace = "pre-line";
+                const dot = document.createElement("span");
+                dot.className = "event-dot";
+                dot.style.color = point.intensity > 0.82 ? "#e7352f" : point.intensity > 0.62 ? "#f47b36" : "#f7d55f";
+                dot.style.background = "currentColor";
+                row.appendChild(dot);
+                row.addEventListener("click", () => {
+                    setMinute(point.minute, true);
+                    flyToPoint(index);
+                });
+                eventList.appendChild(row);
+            });
+        }
+
+        function flyToPoint(index) {
+            const point = heatData[index];
+            if (!point) return;
+            viewer.camera.flyTo({
+                destination: Cesium.Cartesian3.fromDegrees(point.lon, point.lat, 15000),
+                orientation: { heading: Cesium.Math.toRadians(8), pitch: Cesium.Math.toRadians(-50), roll: 0 },
+                duration: 0.8
+            });
+        }
+
+        function setTownOverview() {
+            viewer.camera.setView({
+                destination: Cesium.Cartesian3.fromDegrees(FIRMS_CONFIG.initialCenter.lon, FIRMS_CONFIG.initialCenter.lat, FIRMS_CONFIG.initialCenter.height),
+                orientation: {
+                    heading: Cesium.Math.toRadians(FIRMS_CONFIG.initialCenter.heading),
+                    pitch: Cesium.Math.toRadians(FIRMS_CONFIG.initialCenter.pitch),
+                    roll: 0
+                }
+            });
+        }
+
+        function updateMapStyle() {
+            if (baseGridLayer) baseGridLayer.alpha = state.osm ? 0.55 : 0;
+            if (photoLayer) photoLayer.alpha = state.osm && state.mapStyle === "photo" ? 0.92 : 0;
+            if (standardLayer) standardLayer.alpha = state.osm ? (state.mapStyle === "photo" ? 0.24 : state.mapStyle === "standard" ? 0.88 : 0) : 0;
+            if (paleLayer) paleLayer.alpha = state.osm && state.mapStyle === "pale" ? 0.9 : 0;
+        }
+
+        function updateMap() {
+            const points = visiblePoints(selectedMinute);
+            const wind = interpolateWind(selectedMinute);
+            if (!points.length) {
+                currentTime.textContent = formatDateTime(selectedMinute);
+                currentDate.textContent = `開始から ${formatElapsed(selectedMinute)}`;
+                currentCaption.textContent = "この時点の熱源はありません";
+                phaseBadge.textContent = phaseForMinute(selectedMinute);
+                visibleCount.textContent = "0";
+                maxIntensity.textContent = "0.00";
+                windStatus.textContent = `${windDirectionName(wind.direction)} ${wind.speed.toFixed(1)}m/s`;
+                heatEntities.forEach((entity) => { entity.show = false; });
+                return;
+            }
+
+            const lastPoint = points.at(-1) || origin;
+            heatEntities.forEach((entity, index) => {
+                const point = heatData[index];
+                const show = state.heat && point.minute <= selectedMinute;
+                const isLatest = point.minute === lastPoint.minute;
+                entity.show = show;
+                entity.billboard.scale = fireflyScale(point, isLatest);
+                entity.billboard.color = colorForPoint(point, selectedMinute).withAlpha(isLatest ? 1 : 0.86);
+                entity.point.pixelSize = Math.max(4, heatPixelSize(point, isLatest) * 0.24);
+                entity.point.color = colorForPoint(point, selectedMinute);
+                entity.point.outlineColor = isLatest ? Cesium.Color.WHITE.withAlpha(0.82) : Cesium.Color.WHITE.withAlpha(0.24);
+            });
+
+            const liveWindValues = [];
+            windArrows.forEach((arrow) => {
+                const props = arrow.windMeta;
+                const localWind = props.timeline ? interpolateWindTimeline(props.timeline, selectedMinute) : wind;
+                liveWindValues.push(localWind);
+                const flowDirection = (localWind.direction + 180) % 360;
+                const angle = Cesium.Math.toRadians(flowDirection);
+                const length = windArrowLength(localWind.speed);
+                arrow.polyline.positions = Cesium.Cartesian3.fromDegreesArrayHeights([props.lon, props.lat, 850, props.lon + Math.sin(angle) * length, props.lat + Math.cos(angle) * length, 850]);
+                arrow.polyline.width = 3.4 + Math.min(localWind.speed, 14) * 0.38;
+                arrow.polyline.material = new Cesium.PolylineArrowMaterialProperty(Cesium.Color.fromCssColorString(windColorForSpeed(localWind.speed)).withAlpha(0.95));
+                arrow.show = state.wind;
+            });
+
+            updateMapStyle();
+            if (!state.labels) hoverTooltip.style.display = "none";
+            const averageWind = averageWindVector(liveWindValues) || wind;
+
+            currentTime.textContent = formatDateTime(selectedMinute);
+            currentDate.textContent = `開始から ${formatElapsed(selectedMinute)}`;
+            currentCaption.textContent = lastPoint.note;
+            phaseBadge.textContent = phaseForMinute(selectedMinute);
+            visibleCount.textContent = String(points.length);
+            maxIntensity.textContent = Math.max(...points.map((point) => point.intensity)).toFixed(2);
+            windStatus.textContent = `${windDirectionName(averageWind.direction)} ${averageWind.speed.toFixed(1)}m/s`;
+
+            document.querySelectorAll(".event-item").forEach((row) => {
+                row.classList.toggle("active", Number(row.dataset.minute) <= selectedMinute);
+            });
+        }
+
+        function fitAllHeatSources() {
+            if (!heatData.length) {
+                setTownOverview();
+                return;
+            }
+
+            const west = Math.min(...heatData.map((point) => point.lon)) - 0.015;
+            const south = Math.min(...heatData.map((point) => point.lat)) - 0.015;
+            const east = Math.max(...heatData.map((point) => point.lon)) + 0.015;
+            const north = Math.max(...heatData.map((point) => point.lat)) + 0.015;
+            const rectangle = Cesium.Rectangle.fromDegrees(west, south, east, north);
+            const isNarrow = window.matchMedia("(max-width: 760px)").matches;
+
+            viewer.camera.flyTo({
+                destination: rectangle,
+                duration: 0,
+                orientation: {
+                    heading: Cesium.Math.toRadians(0),
+                    pitch: Cesium.Math.toRadians(-90),
+                    roll: 0
+                },
+                endTransform: Cesium.Matrix4.IDENTITY
+            });
+
+            window.setTimeout(() => {
+                viewer.camera.zoomOut(isNarrow ? 9000 : 5000);
+            }, 50);
+        }
+
+        function setMinute(minute, syncSlider) {
+            selectedMinute = Math.max(0, Math.min(maxMinutes, minute));
+            if (syncSlider) timeRange.value = selectedMinute;
+            updateMap();
+        }
+
+        function startPlayback() {
+            stopPlayback(false);
+            playButton.textContent = "一時停止";
+            playButton.classList.add("active");
+            playTimer = window.setInterval(() => {
+                if (selectedMinute >= maxMinutes) {
+                    stopPlayback(true);
+                    return;
+                }
+                setMinute(selectedMinute + 60, true);
+            }, 1000);
+        }
+
+        function stopPlayback(resetText) {
+            if (playTimer) {
+                window.clearInterval(playTimer);
+                playTimer = null;
+            }
+            if (resetText) {
+                playButton.textContent = "再生";
+                playButton.classList.remove("active");
+            }
+        }
+
+        function startPlaybackSmooth() {
+            stopPlaybackSmooth(false);
+            playButton.textContent = "一時停止";
+            playButton.classList.add("active");
+            playLastFrameTime = performance.now();
+            let lastRenderedMinute = selectedMinute;
+
+            const tick = (now) => {
+                const elapsedMs = now - playLastFrameTime;
+                playLastFrameTime = now;
+                if (selectedMinute >= maxMinutes) {
+                    stopPlaybackSmooth(true);
+                    return;
+                }
+                const nextMinute = Math.min(maxMinutes, selectedMinute + elapsedMs * 0.12);
+                selectedMinute = nextMinute;
+                if (Math.abs(nextMinute - lastRenderedMinute) >= 1 || nextMinute >= maxMinutes) {
+                    timeRange.value = nextMinute;
+                    updateMap();
+                    lastRenderedMinute = nextMinute;
+                }
+                playTimer = window.requestAnimationFrame(tick);
+            };
+
+            playTimer = window.requestAnimationFrame(tick);
+        }
+
+        function stopPlaybackSmooth(resetText) {
+            if (playTimer) {
+                window.cancelAnimationFrame(playTimer);
+                playTimer = null;
+            }
+            playLastFrameTime = null;
+            if (resetText) {
+                playButton.textContent = "再生";
+                playButton.classList.remove("active");
+            }
+        }
+
+        startPlayback = startPlaybackSmooth;
+        stopPlayback = stopPlaybackSmooth;
+
+        function bindControls() {
+            timeRange.addEventListener("input", (event) => {
+                stopPlayback(true);
+                setMinute(Number(event.target.value), false);
+            });
+            playButton.addEventListener("click", () => {
+                if (playTimer) {
+                    stopPlayback(true);
+                    return;
+                }
+                if (selectedMinute >= maxMinutes) setMinute(0, true);
+                startPlayback();
+            });
+            document.getElementById("resetButton").addEventListener("click", () => {
+                stopPlayback(true);
+                setMinute(0, true);
+                flyToPoint(0);
+            });
+            document.getElementById("latestButton").addEventListener("click", () => {
+                stopPlayback(true);
+                setMinute(maxMinutes, true);
+                flyToPoint(heatData.length - 1);
+            });
+            [["toggleHeat", "heat"], ["toggleWind", "wind"], ["toggleOSM", "osm"], ["toggleLabels", "labels"]].forEach(([id, key]) => {
+                const button = document.getElementById(id);
+                button.addEventListener("click", () => {
+                    state[key] = !state[key];
+                    button.classList.toggle("active", state[key]);
+                    if (key === "labels" && !state.labels) hoverTooltip.style.display = "none";
+                    updateMap();
+                });
+            });
+
+            document.querySelectorAll("[data-map-style]").forEach((button) => {
+                button.addEventListener("click", () => {
+                    state.mapStyle = button.dataset.mapStyle;
+                    state.osm = true;
+                    document.getElementById("toggleOSM").classList.add("active");
+                    document.querySelectorAll("[data-map-style]").forEach((styleButton) => {
+                        styleButton.classList.toggle("active", styleButton === button);
+                    });
+                    updateMapStyle();
+                });
+            });
+
+            document.querySelectorAll("[data-time-window]").forEach((button) => {
+                button.addEventListener("click", () => {
+                    state.timeWindow = button.dataset.timeWindow;
+                    document.querySelectorAll("[data-time-window]").forEach((windowButton) => {
+                        windowButton.classList.toggle("active", windowButton === button);
+                    });
+                    updateMap();
+                });
+            });
+        }
+
+        function bindHoverTooltip() {
+            const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+            handler.setInputAction((movement) => {
+                if (!state.labels) {
+                    hoverTooltip.style.display = "none";
+                    return;
+                }
+                const picked = viewer.scene.pick(movement.endPosition);
+                const entity = Cesium.defined(picked) ? picked.id : null;
+                if (!entity || !entity.heatPoint || !entity.show) {
+                    hoverTooltip.style.display = "none";
+                    return;
+                }
+                const point = entity.heatPoint;
+                hoverTooltip.replaceChildren();
+                appendText(hoverTooltip, "strong", point.district);
+                appendText(hoverTooltip, "div", formatDateTime(point.minute));
+                appendText(hoverTooltip, "div", `発生から ${formatElapsed(point.minute)}`);
+                appendText(hoverTooltip, "div", `熱源スコア ${point.intensity.toFixed(2)}`);
+                appendText(hoverTooltip, "div", `輝度温度 ${Math.round(point.brightness || 0)}K`);
+                appendText(hoverTooltip, "div", point.note);
+                hoverTooltip.style.left = `${movement.endPosition.x}px`;
+                hoverTooltip.style.top = `${movement.endPosition.y}px`;
+                hoverTooltip.style.display = "block";
+            }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+            handler.setInputAction(() => {
+                hoverTooltip.style.display = "none";
+            }, Cesium.ScreenSpaceEventType.LEFT_DOWN);
+        }
+
+        async function initialize() {
+            addOSMLayer();
+            addWindLayer();
+            bindControls();
+            bindHoverTooltip();
+            setTownOverview();
+
+            try {
+                heatData = await loadFirmsHeatData();
+                if (!heatData.length) {
+                    throw new Error("対象範囲・期間に表示できるFIRMSデータがありません。");
+                }
+                incidentStart = new Date(FIRMS_CONFIG.timelineStart);
+                heatData.sort((a, b) => a.minute - b.minute);
+                maxMinutes = heatData.at(-1).minute;
+                origin = heatData[0];
+                timeRange.max = maxMinutes;
+                timeRange.step = 1;
+                timeRange.value = 0;
+                document.getElementById("endTimeLabel").textContent = formatElapsed(maxMinutes);
+                sourceNote.textContent = `保存済みFIRMS CSVから${heatData.length}件の熱源を読み込みました。期間: ${formatDateTime(0)} - ${formatDateTime(maxMinutes)}`;
+                try {
+                    sourceNote.textContent += " / Open-Meteo JMA MSMの風向・風速を取得中...";
+                    await loadOpenMeteoWindData();
+                    sourceNote.textContent = `保存済みFIRMS CSVから${heatData.length}件の熱源を読み込みました。期間: ${formatDateTime(0)} - ${formatDateTime(maxMinutes)} / 風向: ${windDataLabel}`;
+                } catch (windError) {
+                    console.warn(windError);
+                    windDataLabel = "固定参考値（Open-Meteo取得失敗）";
+                    sourceNote.textContent = `保存済みFIRMS CSVから${heatData.length}件の熱源を読み込みました。期間: ${formatDateTime(0)} - ${formatDateTime(maxMinutes)} / 風向: Open-Meteo取得失敗のため固定参考値`;
+                }
+                addHeatSources();
+                renderEventList();
+                setMinute(maxMinutes, true);
+                fitAllHeatSources();
+            } catch (error) {
+                console.error(error);
+                emptyState.classList.add("visible");
+                sourceNote.textContent = `読み込みエラー: ${error.message}`;
+                phaseBadge.textContent = "データなし";
+            } finally {
+                setTimeout(() => {
+                    document.getElementById("loading").classList.add("hidden");
+                }, 500);
+            }
+        }
+
+        initialize();
+    </script>
+</body>
+</html>
