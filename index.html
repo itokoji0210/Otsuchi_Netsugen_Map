@@ -42,7 +42,7 @@
         button:hover { background: rgba(255,255,255,.14); }
         button:active { transform: translateY(1px); }
         button.active { background: rgba(244,123,54,.2); border-color: rgba(255,177,93,.75); color: #ffd7aa; }
-        .primary-btn { grid-column: span 2; background: #e34d32; border-color: #ff8b5a; font-weight: 700; }
+        .primary-btn { background: #e34d32; border-color: #ff8b5a; font-weight: 700; }
         .section-label { display: block; margin: 9px 0 5px; font-size: 11px; color: rgba(255,255,255,.62); }
         .stats-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
         .stat { min-height: 50px; padding: 7px; border: 1px solid rgba(255,255,255,.1); border-radius: 7px; background: rgba(255,255,255,.06); }
@@ -120,6 +120,7 @@
                 <button class="primary-btn" id="playButton">再生</button>
                 <button id="resetButton">最初へ</button>
                 <button id="latestButton">最新へ</button>
+                <button id="homeViewButton">全体</button>
             </div>
         </div>
 
@@ -350,16 +351,15 @@
             return "大槌町内陸側";
         }
 
-        function createWindTimeline() {
-            return [
-                { minute: 0, direction: 35, speed: 4.0 },
-                { minute: 120, direction: 48, speed: 5.5 },
-                { minute: 260, direction: 62, speed: 7.2 },
-                { minute: 420, direction: 76, speed: 6.4 },
-                { minute: 570, direction: 92, speed: 8.1 },
-                { minute: 720, direction: 118, speed: 5.8 },
-                { minute: 900, direction: 145, speed: 4.6 }
-            ];
+        function createWindTimeline(totalMinutes = 900) {
+            const timeline = [];
+            const endMinute = Math.max(900, Math.ceil(totalMinutes / 60) * 60 + 60);
+            for (let minute = 0; minute <= endMinute; minute += 60) {
+                const direction = (38 + minute * 0.075 + Math.sin(minute / 260) * 22 + 360) % 360;
+                const speed = Math.max(1.2, 5.6 + Math.sin(minute / 170) * 2.1 + Math.cos(minute / 420) * 1.2);
+                timeline.push({ minute, direction, speed });
+            }
+            return timeline;
         }
 
         function openMeteoTimeToDate(timeText) {
@@ -421,6 +421,8 @@
             if (centerTimeline.length) {
                 windData = centerTimeline;
                 windDataLabel = "Open-Meteo JMA MSM";
+            } else {
+                throw new Error("Open-Meteo returned no usable JMA MSM wind rows.");
             }
         }
 
@@ -507,7 +509,12 @@
             const prev = timeline[nextIndex - 1];
             const next = timeline[nextIndex];
             const ratio = (minute - prev.minute) / (next.minute - prev.minute);
-            return { minute, direction: prev.direction + (next.direction - prev.direction) * ratio, speed: prev.speed + (next.speed - prev.speed) * ratio };
+            const directionDelta = ((next.direction - prev.direction + 540) % 360) - 180;
+            return {
+                minute,
+                direction: (prev.direction + directionDelta * ratio + 360) % 360,
+                speed: prev.speed + (next.speed - prev.speed) * ratio
+            };
         }
 
         function windDirectionName(degree) {
@@ -719,9 +726,29 @@
             if (paleLayer) paleLayer.alpha = state.osm && state.mapStyle === "pale" ? 0.9 : 0;
         }
 
+        function updateWindLayer(wind) {
+            const liveWindValues = [];
+            windArrows.forEach((arrow) => {
+                const props = arrow.windMeta;
+                const localWind = props.timeline ? interpolateWindTimeline(props.timeline, selectedMinute) : wind;
+                liveWindValues.push(localWind);
+                const flowDirection = (localWind.direction + 180) % 360;
+                const angle = Cesium.Math.toRadians(flowDirection);
+                const length = windArrowLength(localWind.speed);
+                arrow.polyline.positions = Cesium.Cartesian3.fromDegreesArrayHeights([props.lon, props.lat, 850, props.lon + Math.sin(angle) * length, props.lat + Math.cos(angle) * length, 850]);
+                arrow.polyline.width = 3.4 + Math.min(localWind.speed, 14) * 0.38;
+                arrow.polyline.material = new Cesium.PolylineArrowMaterialProperty(Cesium.Color.fromCssColorString(windColorForSpeed(localWind.speed)).withAlpha(0.95));
+                arrow.show = state.wind;
+            });
+            return averageWindVector(liveWindValues) || wind;
+        }
+
         function updateMap() {
             const points = visiblePoints(selectedMinute);
             const wind = interpolateWind(selectedMinute);
+            const averageWind = updateWindLayer(wind);
+            updateMapStyle();
+            if (!state.labels) hoverTooltip.style.display = "none";
             if (!points.length) {
                 currentTime.textContent = formatDateTime(selectedMinute);
                 currentDate.textContent = `開始から ${formatElapsed(selectedMinute)}`;
@@ -729,7 +756,7 @@
                 phaseBadge.textContent = phaseForMinute(selectedMinute);
                 visibleCount.textContent = "0";
                 maxIntensity.textContent = "0.00";
-                windStatus.textContent = `${windDirectionName(wind.direction)} ${wind.speed.toFixed(1)}m/s`;
+                windStatus.textContent = `${windDirectionName(averageWind.direction)} ${averageWind.speed.toFixed(1)}m/s`;
                 heatEntities.forEach((entity) => { entity.show = false; });
                 return;
             }
@@ -746,24 +773,6 @@
                 entity.point.color = colorForPoint(point, selectedMinute);
                 entity.point.outlineColor = isLatest ? Cesium.Color.WHITE.withAlpha(0.82) : Cesium.Color.WHITE.withAlpha(0.24);
             });
-
-            const liveWindValues = [];
-            windArrows.forEach((arrow) => {
-                const props = arrow.windMeta;
-                const localWind = props.timeline ? interpolateWindTimeline(props.timeline, selectedMinute) : wind;
-                liveWindValues.push(localWind);
-                const flowDirection = (localWind.direction + 180) % 360;
-                const angle = Cesium.Math.toRadians(flowDirection);
-                const length = windArrowLength(localWind.speed);
-                arrow.polyline.positions = Cesium.Cartesian3.fromDegreesArrayHeights([props.lon, props.lat, 850, props.lon + Math.sin(angle) * length, props.lat + Math.cos(angle) * length, 850]);
-                arrow.polyline.width = 3.4 + Math.min(localWind.speed, 14) * 0.38;
-                arrow.polyline.material = new Cesium.PolylineArrowMaterialProperty(Cesium.Color.fromCssColorString(windColorForSpeed(localWind.speed)).withAlpha(0.95));
-                arrow.show = state.wind;
-            });
-
-            updateMapStyle();
-            if (!state.labels) hoverTooltip.style.display = "none";
-            const averageWind = averageWindVector(liveWindValues) || wind;
 
             currentTime.textContent = formatDateTime(selectedMinute);
             currentDate.textContent = `開始から ${formatElapsed(selectedMinute)}`;
@@ -895,12 +904,16 @@
             document.getElementById("resetButton").addEventListener("click", () => {
                 stopPlayback(true);
                 setMinute(0, true);
-                flyToPoint(0);
+                fitAllHeatSources();
             });
             document.getElementById("latestButton").addEventListener("click", () => {
                 stopPlayback(true);
                 setMinute(maxMinutes, true);
-                flyToPoint(heatData.length - 1);
+                fitAllHeatSources();
+            });
+            document.getElementById("homeViewButton").addEventListener("click", () => {
+                stopPlayback(true);
+                fitAllHeatSources();
             });
             [["toggleHeat", "heat"], ["toggleWind", "wind"], ["toggleOSM", "osm"], ["toggleLabels", "labels"]].forEach(([id, key]) => {
                 const button = document.getElementById(id);
@@ -981,6 +994,7 @@
                 heatData.sort((a, b) => a.minute - b.minute);
                 maxMinutes = heatData.at(-1).minute;
                 origin = heatData[0];
+                windData = createWindTimeline(maxMinutes);
                 timeRange.max = maxMinutes;
                 timeRange.step = 1;
                 timeRange.value = 0;
@@ -993,6 +1007,9 @@
                 } catch (windError) {
                     console.warn(windError);
                     windDataLabel = "固定参考値（Open-Meteo取得失敗）";
+                    windArrows.forEach((arrow) => {
+                        arrow.windMeta.timeline = null;
+                    });
                     sourceNote.textContent = `保存済みFIRMS CSVから${heatData.length}件の熱源を読み込みました。期間: ${formatDateTime(0)} - ${formatDateTime(maxMinutes)} / 風向: Open-Meteo取得失敗のため固定参考値`;
                 }
                 addHeatSources();
