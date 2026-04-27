@@ -64,7 +64,7 @@
         @media (max-width: 760px) {
             .title-overlay { top: 12px; left: 14px; right: 14px; }
             .title-overlay p { display: none; }
-            .control-panel { top: auto; right: 10px; left: 10px; bottom: 10px; width: auto; max-height: 38vh; padding: 10px; }
+            .control-panel { top: auto; right: 10px; left: 10px; bottom: 10px; width: auto; max-height: 32vh; padding: 9px; }
             .panel-heading { margin-bottom: 8px; }
             .panel-heading h2 { font-size: 14px; }
             .time-card { padding: 9px; margin-bottom: 8px; }
@@ -384,6 +384,39 @@
             }).filter(Boolean).sort((a, b) => a.minute - b.minute);
         }
 
+        function validateWindTimeline(timeline) {
+            if (!timeline.length) return false;
+            return timeline.every((wind) =>
+                Number.isFinite(wind.minute) &&
+                Number.isFinite(wind.speed) &&
+                Number.isFinite(wind.direction) &&
+                wind.speed >= 0 &&
+                wind.speed <= 80 &&
+                wind.direction >= 0 &&
+                wind.direction <= 360
+            );
+        }
+
+        function windTimelineSummary(timeline) {
+            if (!timeline.length) return "0件";
+            const first = timeline[0].observedAt ? new Intl.DateTimeFormat("ja-JP", {
+                month: "numeric",
+                day: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+                timeZone: "Asia/Tokyo"
+            }).format(timeline[0].observedAt) : `${timeline[0].minute}分`;
+            const last = timeline.at(-1).observedAt ? new Intl.DateTimeFormat("ja-JP", {
+                month: "numeric",
+                day: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+                timeZone: "Asia/Tokyo"
+            }).format(timeline.at(-1).observedAt) : `${timeline.at(-1).minute}分`;
+            const maxSpeed = Math.max(...timeline.map((wind) => wind.speed));
+            return `${timeline.length}件 ${first}-${last} 最大${maxSpeed.toFixed(1)}m/s`;
+        }
+
         async function loadOpenMeteoWindData() {
             if (!windArrows.length || !incidentStart) return;
 
@@ -410,7 +443,7 @@
 
             windArrows.forEach((arrow, index) => {
                 const timeline = toWindTimeline(locations[index]?.hourly);
-                if (timeline.length) {
+                if (validateWindTimeline(timeline)) {
                     arrow.windMeta.timeline = timeline;
                     if (!centerTimeline.length || Math.abs(arrow.windMeta.x) + Math.abs(arrow.windMeta.y) === 0) {
                         centerTimeline = timeline;
@@ -420,7 +453,12 @@
 
             if (centerTimeline.length) {
                 windData = centerTimeline;
-                windDataLabel = "Open-Meteo JMA MSM";
+                windDataLabel = `Open-Meteo JMA MSM (${windTimelineSummary(centerTimeline)})`;
+                console.info("Open-Meteo JMA MSM wind validation passed:", {
+                    locations: locations.length,
+                    center: windTimelineSummary(centerTimeline),
+                    sample: centerTimeline.slice(0, 3)
+                });
             } else {
                 throw new Error("Open-Meteo returned no usable JMA MSM wind rows.");
             }
@@ -547,6 +585,25 @@
             return { direction, speed };
         }
 
+        function windForMeta(meta, minute, fallbackWind) {
+            return meta.timeline ? interpolateWindTimeline(meta.timeline, minute) : (fallbackWind || interpolateWind(minute));
+        }
+
+        function windPositionsForMeta(meta, minute) {
+            const localWind = windForMeta(meta, minute);
+            const flowDirection = (localWind.direction + 180) % 360;
+            const angle = Cesium.Math.toRadians(flowDirection);
+            const length = windArrowLength(localWind.speed);
+            return Cesium.Cartesian3.fromDegreesArrayHeights([
+                meta.lon,
+                meta.lat,
+                850,
+                meta.lon + Math.sin(angle) * length,
+                meta.lat + Math.cos(angle) * length,
+                850
+            ]);
+        }
+
         function phaseForMinute(minute) {
             if (minute < 120) return "初期検知";
             if (minute < 360) return "検知増加";
@@ -606,11 +663,16 @@
                 for (let y = -3; y <= 3; y++) {
                     const lon = centerLon + x * spacing;
                     const lat = centerLat + y * spacing;
+                    const meta = { lon, lat, x, y, timeline: null };
                     const arrow = viewer.entities.add({
                         position: Cesium.Cartesian3.fromDegrees(lon, lat, 850),
-                        polyline: { positions: [], width: 4, material: new Cesium.PolylineArrowMaterialProperty(Cesium.Color.fromCssColorString(windColorForSpeed(4)).withAlpha(0.95)) }
+                        polyline: {
+                            positions: new Cesium.CallbackProperty(() => windPositionsForMeta(meta, selectedMinute), false),
+                            width: 4,
+                            material: new Cesium.PolylineArrowMaterialProperty(Cesium.Color.fromCssColorString(windColorForSpeed(4)).withAlpha(0.95))
+                        }
                     });
-                    arrow.windMeta = { lon, lat, x, y };
+                    arrow.windMeta = meta;
                     arrow.show = false;
                     windArrows.push(arrow);
                 }
@@ -730,18 +792,41 @@
             const liveWindValues = [];
             windArrows.forEach((arrow) => {
                 const props = arrow.windMeta;
-                const localWind = props.timeline ? interpolateWindTimeline(props.timeline, selectedMinute) : wind;
+                const localWind = windForMeta(props, selectedMinute, wind);
                 liveWindValues.push(localWind);
-                const flowDirection = (localWind.direction + 180) % 360;
-                const angle = Cesium.Math.toRadians(flowDirection);
-                const length = windArrowLength(localWind.speed);
-                arrow.polyline.positions = Cesium.Cartesian3.fromDegreesArrayHeights([props.lon, props.lat, 850, props.lon + Math.sin(angle) * length, props.lat + Math.cos(angle) * length, 850]);
                 arrow.polyline.width = 3.4 + Math.min(localWind.speed, 14) * 0.38;
                 arrow.polyline.material = new Cesium.PolylineArrowMaterialProperty(Cesium.Color.fromCssColorString(windColorForSpeed(localWind.speed)).withAlpha(0.95));
                 arrow.show = state.wind;
             });
             return averageWindVector(liveWindValues) || wind;
         }
+
+        function updateWindStatusOnly() {
+            const wind = interpolateWind(selectedMinute);
+            const averageWind = updateWindLayer(wind);
+            windStatus.textContent = `${windDirectionName(averageWind.direction)} ${averageWind.speed.toFixed(1)}m/s`;
+            viewer.scene.requestRender();
+        }
+
+        window.fireMapDebug = {
+            windAt(minute = selectedMinute) {
+                const centerArrow = windArrows.find((arrow) => arrow.windMeta.x === 0 && arrow.windMeta.y === 0);
+                const wind = centerArrow?.windMeta.timeline
+                    ? interpolateWindTimeline(centerArrow.windMeta.timeline, minute)
+                    : interpolateWind(minute);
+                return {
+                    minute,
+                    dateTime: formatDateTime(minute),
+                    source: windDataLabel,
+                    direction: wind.direction,
+                    directionName: windDirectionName(wind.direction),
+                    speed: wind.speed
+                };
+            },
+            windSamples() {
+                return [0, Math.round(maxMinutes / 3), Math.round(maxMinutes * 2 / 3), maxMinutes].map((minute) => this.windAt(minute));
+            }
+        };
 
         function updateMap() {
             const points = visiblePoints(selectedMinute);
@@ -758,6 +843,7 @@
                 maxIntensity.textContent = "0.00";
                 windStatus.textContent = `${windDirectionName(averageWind.direction)} ${averageWind.speed.toFixed(1)}m/s`;
                 heatEntities.forEach((entity) => { entity.show = false; });
+                viewer.scene.requestRender();
                 return;
             }
 
@@ -785,6 +871,7 @@
             document.querySelectorAll(".event-item").forEach((row) => {
                 row.classList.toggle("active", Number(row.dataset.minute) <= selectedMinute);
             });
+            viewer.scene.requestRender();
         }
 
         function fitAllHeatSources() {
@@ -793,12 +880,18 @@
                 return;
             }
 
-            const west = Math.min(...heatData.map((point) => point.lon)) - 0.015;
-            const south = Math.min(...heatData.map((point) => point.lat)) - 0.015;
-            const east = Math.max(...heatData.map((point) => point.lon)) + 0.015;
-            const north = Math.max(...heatData.map((point) => point.lat)) + 0.015;
-            const rectangle = Cesium.Rectangle.fromDegrees(west, south, east, north);
+            const rawWest = Math.min(...heatData.map((point) => point.lon));
+            const rawSouth = Math.min(...heatData.map((point) => point.lat));
+            const rawEast = Math.max(...heatData.map((point) => point.lon));
+            const rawNorth = Math.max(...heatData.map((point) => point.lat));
             const isNarrow = window.matchMedia("(max-width: 760px)").matches;
+            const lonSpan = Math.max(rawEast - rawWest, 0.02);
+            const latSpan = Math.max(rawNorth - rawSouth, 0.02);
+            const west = rawWest - lonSpan * 0.22;
+            const east = rawEast + lonSpan * 0.22;
+            const north = rawNorth + latSpan * (isNarrow ? 0.2 : 0.28);
+            const south = rawSouth - latSpan * (isNarrow ? 1.35 : 0.28);
+            const rectangle = Cesium.Rectangle.fromDegrees(west, south, east, north);
 
             viewer.camera.flyTo({
                 destination: rectangle,
@@ -812,7 +905,7 @@
             });
 
             window.setTimeout(() => {
-                viewer.camera.zoomOut(isNarrow ? 9000 : 5000);
+                viewer.camera.zoomOut(isNarrow ? 4500 : 3500);
             }, 50);
         }
 
@@ -862,8 +955,11 @@
                 }
                 const nextMinute = Math.min(maxMinutes, selectedMinute + elapsedMs * 0.12);
                 selectedMinute = nextMinute;
-                if (Math.abs(nextMinute - lastRenderedMinute) >= 1 || nextMinute >= maxMinutes) {
-                    timeRange.value = nextMinute;
+
+                timeRange.value = nextMinute;
+                updateWindStatusOnly();
+
+                if (Math.abs(nextMinute - lastRenderedMinute) >= 3 || nextMinute >= maxMinutes) {
                     updateMap();
                     lastRenderedMinute = nextMinute;
                 }
@@ -892,6 +988,7 @@
             timeRange.addEventListener("input", (event) => {
                 stopPlayback(true);
                 setMinute(Number(event.target.value), false);
+                updateWindStatusOnly();
             });
             playButton.addEventListener("click", () => {
                 if (playTimer) {
@@ -979,13 +1076,13 @@
         }
 
         async function initialize() {
-            addOSMLayer();
-            addWindLayer();
-            bindControls();
-            bindHoverTooltip();
-            setTownOverview();
-
             try {
+                addOSMLayer();
+                addWindLayer();
+                bindControls();
+                bindHoverTooltip();
+                setTownOverview();
+
                 heatData = await loadFirmsHeatData();
                 if (!heatData.length) {
                     throw new Error("対象範囲・期間に表示できるFIRMSデータがありません。");
